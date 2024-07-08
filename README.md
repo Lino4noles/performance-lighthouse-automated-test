@@ -23,3 +23,6 @@ In **package.json**, You can find the collection of **scripts** member -> an obj
     * This script runs when you execute lighthouse in UAT
 * **"npm run lighthouse:prod"**: "node features/script/performanceLighthouseScore.js PROD"
     * This script runs when you execute lighthouse in PROD
+
+## ⚙️ Build With:
+- [Selenium](https://github.com/SeleniumHQ/selenium) - Automation Framework.
