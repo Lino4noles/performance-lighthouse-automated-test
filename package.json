@@ -4,10 +4,10 @@
   "description": "",
   "main": "index.js",
 "scripts": {
-  "lighthouse:dev": "node features/script/performanceLighthouseScore.js DEV",
-  "lighthouse:sit": "node features/script/performanceLighthouseScore.js SIT",
-  "lighthouse:uat": "node features/script/performanceLighthouseScore.js UAT",
-  "lighthouse:prod": "node features/script/performanceLighthouseScore.js PROD"
+  "lighthouse:dev": "node --max-old-space-size=16384 features/script/performanceLighthouseScore.js DEV",
+  "lighthouse:sit": "node --max-old-space-size=16384 features/script/performanceLighthouseScore.js SIT",
+  "lighthouse:uat": "node --max-old-space-size=16384 features/script/performanceLighthouseScore.js UAT",
+  "lighthouse:prod": "node --max-old-space-size=16384 features/script/performanceLighthouseScore.js PROD"
 },
   "keywords": [],
   "author": "",
