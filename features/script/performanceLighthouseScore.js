@@ -1,21 +1,27 @@
-const { Builder } = require('selenium-webdriver');
-const { By } = require('selenium-webdriver');
+const { Builder, By } = require('selenium-webdriver');
+const chrome = require('selenium-webdriver/chrome'); 
 const { exec } = require('child_process');
 const fs = require('fs');
 const xlsx = require('xlsx');
 const path = require('path');
 const ExcelJS = require('exceljs');
 
-// Function to run tests
+const options = new chrome.Options();
+options.addArguments('--ignore-certificate-errors');
+options.addArguments('--disable-web-security');
+options.addArguments('--allow-insecure-localhost'); 
+
+const driver = new Builder()
+    .forBrowser('chrome')
+    .setChromeOptions(options)
+    .build();
+
 async function runTests(environment) {
     const urls = readURLsFromExcel('urls.xlsx', environment);
-
     if (urls.length === 0) {
         console.log(`No URLs found for environment ${environment}. Skipping test execution.`);
         return;
     }
-
-    const driver = await new Builder().forBrowser('chrome').build();
 
     const devices = ['desktop', 'mobile', 'tablet'];
     const currentDateTime = new Date();
@@ -39,7 +45,7 @@ async function runTests(environment) {
     const jsonBaseDir = path.join(testDir, 'JSON');
     const htmlBaseDir = path.join(testDir, 'HTML');
 
-    ['desktop', 'mobile', 'tablet'].forEach(deviceType => {
+    devices.forEach(deviceType => {
         fs.mkdirSync(path.join(htmlBaseDir, deviceType), { recursive: true });
         fs.mkdirSync(path.join(jsonBaseDir, deviceType), { recursive: true });
     });
@@ -50,24 +56,42 @@ async function runTests(environment) {
             for (const device of devices) {
                 const jsonReportPath = path.join(jsonBaseDir, device, `${sanitizedURL}.json`);
                 const htmlDeviceDir = path.join(htmlBaseDir, device);
-                try {
-                    await driver.get(url);
-                    const { htmlReportPath } = await runLighthouseAudit(url, jsonReportPath, htmlDeviceDir, device);
-                    const scores = await extractScoresFromHTML(htmlReportPath, driver);
-                    if (scores) {
-                        await updateExcelSummary(url, environment, device, scores, testDir);
+                let success = false;
+                let retries = 0;
+
+                while (!success && retries < 3) { // Retry up to 3 times
+                    try {
+                        console.log(`Navigating to ${url}`);
+                        await driver.get(url);
+                        const { htmlReportPath } = await runLighthouseAudit(url, jsonReportPath, htmlDeviceDir, device);
+                        const scores = await extractScoresFromHTML(htmlReportPath, driver);
+                        if (scores) {
+                            await updateExcelSummary(url, environment, device, scores, testDir);
+                            success = true; // Break the loop on success
+                        }
+                    } catch (auditError) {
+                        retries++;
+                        console.error(`Lighthouse audit failed for URL: ${url} on ${device}. Retry ${retries}`);
+                        console.error(`Error: ${auditError.message}`);
                     }
-                } catch (auditError) {
-                    console.error(`Lighthouse audit failed for URL: ${url} on ${device}, continuing with next URL.`);
+                }
+
+                if (!success) {
+                    console.error(`Failed to process URL: ${url} on ${device} after multiple attempts.`);
                 }
             }
         }
     } catch (error) {
         console.error('Error during test execution:', error);
     } finally {
-        await driver.quit();
+        try {
+            await driver.quit();
+        } catch (quitError) {
+            console.error('Error quitting the WebDriver:', quitError);
+        }
     }
 }
+
 
 async function updateExcelSummary(url, environment, deviceType, scores, testDir) {
     try {
@@ -317,7 +341,10 @@ async function updateExcelSummary(url, environment, deviceType, scores, testDir)
 async function extractScoresFromHTML(htmlReportPath, driver) {
     try {
         await driver.get(`file://${htmlReportPath}`);
-        
+
+        // Add a wait to ensure the report is fully loaded
+        await driver.wait(() => driver.executeScript('return document.readyState === "complete"'), 10000);
+
         const performanceScore = await driver.findElement(By.xpath('/html/body/article/div[2]/div[2]/div/div/div/div[2]/a[1]/div[2]')).getText();
         const accessibilityScore = await driver.findElement(By.xpath('/html/body/article/div[2]/div[2]/div/div/div/div[2]/a[2]/div[2]')).getText();
         const bestPracticesScore = await driver.findElement(By.xpath('/html/body/article/div[2]/div[2]/div/div/div/div[2]/a[3]/div[2]')).getText();
@@ -359,57 +386,44 @@ function sanitizeURL(url) {
 }
 
 // Function to run Lighthouse audit
-function runLighthouseAudit(url, jsonReportPath, htmlBaseDir, deviceType, retries = 3) {
+async function runLighthouseAudit(url, jsonReportPath, htmlBaseDir, deviceType) {
+    const config = getLighthouseConfig(deviceType);
+    const sanitizedURL = sanitizeURL(url);
+    const jsonReportPathResolved = path.resolve(jsonReportPath);
+    const htmlReportPath = path.join(htmlBaseDir, `${sanitizedURL}.html`);
+
+    console.log(`Running Lighthouse for URL: ${url} on ${deviceType}`);
+
     return new Promise((resolve, reject) => {
-        const absoluteJsonReportPath = path.resolve(jsonReportPath);
+        const jsonCommand = `npx lighthouse ${url} --output=json --output-path="${jsonReportPathResolved}" ${config} --max-wait-for-load 120000`;
+        const htmlCommand = `npx lighthouse ${url} --output=html --output-path="${htmlReportPath}" ${config} --max-wait-for-load 120000`;
 
-        let config;
-        if (deviceType === 'desktop') {
-            config = '--preset=desktop';
-        } else if (deviceType === 'mobile') {
-            config = '--emulated-form-factor=mobile';
-        } else if (deviceType === 'tablet') {
-            config = '--emulated-form-factor=mobile --screenEmulation.width=768 --screenEmulation.height=1024 --screenEmulation.deviceScaleFactor=2';
-        }
+        exec(jsonCommand, (jsonError, jsonStdout, jsonStderr) => {
+            if (jsonError) {
+                console.error(`Error executing Lighthouse JSON report for URL ${url}: ${jsonError.message}`);
+                console.error(`stderr: ${jsonStderr}`);
+                reject(jsonError);
+                return;
+            }
 
-        const sanitizedURL = sanitizeURL(url);
-
-        const runAudit = (retryCount) => {
-            console.log(`Running Lighthouse for URL: ${url} on ${deviceType} (Retry ${retryCount})`);
-            exec(`npx lighthouse ${url} --output=json --output-path="${absoluteJsonReportPath}" ${config} --max-wait-for-load 45000`, (error, stdout, stderr) => {
-                if (error) {
-                    console.error(`Error executing Lighthouse JSON report for URL ${url}: ${error.message}`);
-                    console.error(`stderr: ${stderr}`);
-                    if (retryCount < retries) {
-                        runAudit(retryCount + 1);
-                    } else {
-                        reject(error);
-                        return;
-                    }
+            exec(htmlCommand, (htmlError, htmlStdout, htmlStderr) => {
+                if (htmlError) {
+                    console.error(`Error executing Lighthouse HTML report for URL ${url}: ${htmlError.message}`);
+                    console.error(`stderr: ${htmlStderr}`);
+                    reject(htmlError);
                 } else {
-                    const htmlReportPath = path.join(htmlBaseDir, `${sanitizedURL}.html`);
-                    exec(`npx lighthouse ${url} --output=html --output-path="${htmlReportPath}" ${config} --max-wait-for-load 45000`, (error, stdout, stderr) => {
-                        if (error) {
-                            console.error(`Error executing Lighthouse HTML report for URL ${url}: ${error.message}`);
-                            console.error(`stderr: ${stderr}`);
-                            if (retryCount < retries) {
-                                runAudit(retryCount + 1);
-                            } else {
-                                reject(error);
-                                return;
-                            }
-                        } else {
-                            console.log(`Lighthouse audit completed for URL ${url} on ${deviceType}`);
-                            console.log(`stdout: ${stdout}`);
-                            resolve({ jsonReportPath: absoluteJsonReportPath, htmlReportPath });
-                        }
-                    });
+                    console.log(`Lighthouse audit completed for URL ${url} on ${deviceType}`);
+                    resolve({ jsonReportPath: jsonReportPathResolved, htmlReportPath });
                 }
             });
-        };
-
-        runAudit(0);
+        });
     });
+}
+
+function getLighthouseConfig(deviceType) {
+    if (deviceType === 'desktop') return '--preset=desktop';
+    if (deviceType === 'mobile') return '--emulated-form-factor=mobile';
+    if (deviceType === 'tablet') return '--emulated-form-factor=mobile --screenEmulation.width=768 --screenEmulation.height=1024 --screenEmulation.deviceScaleFactor=2';
 }
 
 // Determine the environment from the command line argument
