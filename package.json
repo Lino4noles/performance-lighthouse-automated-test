@@ -7,7 +7,12 @@
   "lighthouse:dev": "node --max-old-space-size=16384 features/script/performanceLighthouseScore.js DEV",
   "lighthouse:sit": "node --max-old-space-size=16384 features/script/performanceLighthouseScore.js SIT",
   "lighthouse:uat": "node --max-old-space-size=16384 features/script/performanceLighthouseScore.js UAT",
-  "lighthouse:prod": "node --max-old-space-size=16384 features/script/performanceLighthouseScore.js PROD"
+  "lighthouse:prod": "node --max-old-space-size=16384 features/script/performanceLighthouseScore.js PROD",
+  
+  "lighthouse:mac:dev": "caffeinate -i node --max-old-space-size=16384 features/script/performanceLighthouseScore.js DEV",
+  "lighthouse:mac:sit": "caffeinate -i node --max-old-space-size=16384 features/script/performanceLighthouseScore.js SIT",
+  "lighthouse:mac:uat": "caffeinate -i node --max-old-space-size=16384 features/script/performanceLighthouseScore.js UAT",
+  "lighthouse:mac:prod": "caffeinate -i node --max-old-space-size=16384 features/script/performanceLighthouseScore.js PROD"
 },
   "keywords": [],
   "author": "",
